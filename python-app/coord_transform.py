@@ -42,8 +42,18 @@ def _build_coord_transform(cal):
 
     dx = gx1 - gx0
     dz = gz1 - gz0
-    if abs(dx) < 1e-6 or abs(dz) < 1e-6:
-        return 1.0, 0.0, 1.0, 0.0
+    # Degenerate calibration — fall back to known-good defaults rather than scale=1 garbage
+    if abs(dx) < 200 or abs(dz) < 200:
+        from config import DEFAULT_CALIBRATIONS
+        defaults = DEFAULT_CALIBRATIONS["pywel"]
+        return _build_coord_transform(defaults)
+    # Sanity-check the resulting scale values (should be ~4e-5, not wildly off)
+    sx_candidate = (lng1 - lng0) / dx
+    sz_candidate = (lat1 - lat0) / dz
+    if not (1e-6 < abs(sx_candidate) < 1e-3) or not (1e-6 < abs(sz_candidate) < 1e-3):
+        from config import DEFAULT_CALIBRATIONS
+        defaults = DEFAULT_CALIBRATIONS["pywel"]
+        return _build_coord_transform(defaults)
 
     scale_x = (lng1 - lng0) / dx
     offset_x = lng0 - gx0 * scale_x

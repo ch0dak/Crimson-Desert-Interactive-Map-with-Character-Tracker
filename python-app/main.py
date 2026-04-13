@@ -112,12 +112,24 @@ class MapTracker:
                 "done": False,
             }
         else:
+            # Reject if the two game positions are too close — would produce a degenerate transform
+            p1_game = cal[0]["game"]
+            dist = ((pos[0] - p1_game[0])**2 + (pos[2] - p1_game[1])**2) ** 0.5
+            if dist < 200:
+                log.warning(f"Calibration point 2 too close to point 1 (dist={dist:.0f}). Move further away.")
+                self._cal_status_msg = {
+                    "type": "calibration_status",
+                    "text": f"Too close to point 1 (only {dist:.0f} units away). Move much further and try again.",
+                    "done": False,
+                }
+                return
+
             cal[1] = {"game": [pos[0], pos[2]], "map": [lng, lat]}
             save_calibration(cal, self.current_realm)
             self.calibrations[self.current_realm] = cal
             self.calibrating = False
             self.cal_point_index = 0
-            log.info(f"Calibration point 2 captured. Calibration saved for {self.current_realm}.")
+            log.info(f"Calibration point 2 captured (dist={dist:.0f} from p1). Saved for {self.current_realm}.")
             self._cal_status_msg = {
                 "type": "calibration_status",
                 "text": f"Calibration saved for {self.current_realm}!",
@@ -165,6 +177,7 @@ class MapTracker:
 
         last_broadcast = 0
         last_waypoint_broadcast = 0
+        last_debug_log = 0
         attached = False
         aobs_scanned = False
         last_realm = None
@@ -213,6 +226,42 @@ class MapTracker:
                     log.warning("No entity hook found, retrying in 5s (close other mods and restart game)...")
                     await asyncio.sleep(5)
                     continue
+
+            # Debug: log entity pointer + raw position every 3s
+            if now - last_debug_log >= 3.0:
+                last_debug_log = now
+                raw_ptr = 0
+                if self.reader.entity_ptr_addr:
+                    try:
+                        import struct as _struct
+                        raw_ptr = self.reader.pm.read_ulonglong(self.reader.entity_ptr_addr)
+                    except Exception:
+                        pass
+                if raw_ptr == 0:
+                    log.info("DEBUG entity_ptr=0x0 (hook not fired — walk around in-game)")
+                else:
+                    try:
+                        import struct as _struct
+                        raw = self.reader.pm.read_bytes(raw_ptr + 0x90, 12)
+                        x, y, z = _struct.unpack('<fff', raw)
+                        wo = self.reader.get_world_offsets()
+                        if wo:
+                            abs_x, abs_z = x + wo[0], z + wo[2]
+                            log.info(f"DEBUG entity=0x{raw_ptr:X}  local=({x:.1f},{y:.1f},{z:.1f})  world_off=({wo[0]:.0f},{wo[2]:.0f})  abs=({abs_x:.1f},{y:.1f},{abs_z:.1f})")
+                        else:
+                            abs_x, abs_z = x, z
+                            log.info(f"DEBUG entity=0x{raw_ptr:X}  local=({x:.1f},{y:.1f},{z:.1f})  (no world offset)")
+                        # Phase 1: compare entity+0x1B0 against abs position
+                        try:
+                            raw1b0 = self.reader.pm.read_bytes(raw_ptr + 0x1B0, 16)
+                            x1, y1, z1, w1 = _struct.unpack('<ffff', raw1b0)
+                            dx = x1 - abs_x
+                            dz = z1 - abs_z
+                            log.info(f"DEBUG 0x1B0=({x1:.1f},{y1:.1f},{z1:.1f},{w1:.1f})  delta_from_abs=({dx:+.1f},{dz:+.1f})")
+                        except Exception as e1:
+                            log.info(f"DEBUG 0x1B0 read error: {e1}")
+                    except Exception as e:
+                        log.info(f"DEBUG entity=0x{raw_ptr:X}  read error: {e}")
 
             # Read position
             pos = self.reader.get_player_abs()

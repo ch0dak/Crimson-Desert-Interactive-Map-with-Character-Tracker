@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import urllib.request
 from websockets.asyncio.server import serve
 from websockets.datastructures import Headers
 from websockets.http11 import Response
@@ -38,11 +39,59 @@ class TrackerWebSocketServer:
         """Set callback for messages from clients: handler(msg_dict)"""
         self._message_handler = handler
 
+    async def _proxy_tile(self, path):
+        """Proxy a tile request to MapGenie with the correct Referer header.
+
+        path format: /tiles/<realm>/<z>/<y>/<x>.jpg
+        realm is 'pywel' or 'abyss'
+        """
+        TILE_BASES = {
+            "pywel": "https://tiles.mapgenie.io/games/crimson-desert/pywel/default-v2",
+            "abyss": "https://tiles.mapgenie.io/games/crimson-desert/oats/faction-v3",
+        }
+        parts = path.lstrip("/").split("/")  # ['tiles', realm, z, y, 'x.jpg']
+        if len(parts) < 5:
+            return Response(404, "Not Found", Headers())
+        realm = parts[1]
+        rest = "/".join(parts[2:])  # z/y/x.jpg
+        base = TILE_BASES.get(realm)
+        if not base:
+            return Response(404, "Not Found", Headers())
+
+        url = f"{base}/{rest}"
+
+        def fetch():
+            req = urllib.request.Request(url, headers={
+                "Referer": "https://mapgenie.io/",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+            })
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.read()
+
+        try:
+            data = await asyncio.to_thread(fetch)
+            headers = Headers([
+                ("Content-Type", "image/jpeg"),
+                ("Content-Length", str(len(data))),
+                ("Cache-Control", "public, max-age=86400"),
+                ("Access-Control-Allow-Origin", "*"),
+            ])
+            return Response(200, "OK", headers, data)
+        except Exception as e:
+            log.debug(f"Tile proxy error {url}: {e}")
+            return Response(404, "Not Found", Headers())
+
     async def _process_request(self, connection, request):
         """Handle HTTP requests for static files; return None to upgrade to WS."""
         # If this looks like a WebSocket upgrade, let it through
         if request.headers.get("Upgrade", "").lower() == "websocket":
             return None
+
+        # Proxy tile requests to MapGenie
+        path = request.path
+        if path.startswith("/tiles/"):
+            return await self._proxy_tile(path)
 
         # Serve static files
         path = request.path

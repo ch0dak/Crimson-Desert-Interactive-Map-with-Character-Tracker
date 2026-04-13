@@ -417,27 +417,57 @@ if __name__ == "__main__":
             print("Hook installation failed.")
             reader.detach()
             sys.exit(1)
-        print("Hook installed. Move your character in-game to capture entity...")
-        # Poll for up to 10 seconds
-        for i in range(20):
-            pos = reader.get_player_abs()
-            if pos:
-                break
-            time.sleep(0.5)
+        print("Hook installed. WALK AROUND in-game now...")
     else:
         print("No hook address found and no pointer chain configured.")
         print("Make sure no other mod is hooked, then restart the game.")
         reader.detach()
         sys.exit(1)
 
-    pos = reader.get_player_abs()
-    if pos:
-        print(f"\nPlayer absolute position: ({pos[0]:.2f}, {pos[1]:.2f}, {pos[2]:.2f})")
-        off = reader.get_world_offsets()
-        if off:
-            print(f"World offsets: X={off[0]:.2f}, Y={off[1]:.2f}, Z={off[2]:.2f}")
-    else:
-        print("\nCould not read player position after 10s.")
-        print("Try moving your character in-game, then run again.")
+    print("\nPolling for 30s — keep moving in-game. Ctrl+C to stop early.\n")
+    print(f"  entity_ptr storage: 0x{reader.entity_ptr_addr:X}")
+    print(f"  hook address:       0x{reader.hook_addr:X}\n")
+
+    try:
+        for i in range(60):
+            time.sleep(0.5)
+
+            # Raw entity pointer value
+            raw_ptr = 0
+            if reader.entity_ptr_addr:
+                try:
+                    raw_ptr = reader.pm.read_ulonglong(reader.entity_ptr_addr)
+                except Exception:
+                    pass
+
+            entity = reader.get_entity_addr()
+
+            if raw_ptr == 0:
+                print(f"  [{i*0.5:5.1f}s] entity_ptr = 0x0  (hook hasn't fired yet — keep moving)")
+                continue
+
+            print(f"  [{i*0.5:5.1f}s] entity_ptr = 0x{raw_ptr:X}", end="")
+
+            if entity is None:
+                print("  (ignored: < 0x10000 or null)")
+                continue
+
+            # Read raw bytes at position offsets
+            try:
+                raw = reader.pm.read_bytes(entity + 0x90, 12)
+                x, y, z = struct.unpack('<fff', raw)
+                print(f"  x={x:.2f}  y={y:.2f}  z={z:.2f}", end="")
+
+                off = reader.get_world_offsets()
+                if off:
+                    print(f"  world=({off[0]:.1f},{off[1]:.1f},{off[2]:.1f})"
+                          f"  abs=({x+off[0]:.2f},{y:.2f},{z+off[2]:.2f})", end="")
+            except Exception as e:
+                print(f"  read error: {e}", end="")
+
+            print()
+
+    except KeyboardInterrupt:
+        pass
 
     reader.detach()

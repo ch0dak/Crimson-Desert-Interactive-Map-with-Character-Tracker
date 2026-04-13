@@ -28,10 +28,11 @@ CALIBRATION_FILES = {
 # Default calibration points per realm (from reference mod)
 DEFAULT_CALIBRATIONS = {
     "pywel": [
-        {"game": [-12127.138259887695, 7.692434787750244],
-         "map": [-0.9052420615140191, 0.7787327582867241]},
-        {"game": [-3690.7935791015625, -6117.512298583984],
-         "map": [-0.5555426902317491, 0.5248899410143244]},
+        # Derived from 13-point least-squares fit against community waypoints + MapGenie data
+        {"game": [-11861.461, -763.551],
+         "map": [-0.8957024, 0.7448111]},
+        {"game": [-3739.250, 3384.480],
+         "map": [-0.5562977, 0.9152039]},
     ],
     "abyss": [
         {"game": [-10679.2001953125, -3686.5693359375],

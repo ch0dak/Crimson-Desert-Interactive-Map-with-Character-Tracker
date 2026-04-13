@@ -1,5 +1,13 @@
 @echo off
 cd /d "%~dp0"
+
+:: Self-elevate: relaunch as admin if not already
+net session >nul 2>&1
+if %errorlevel% neq 0 (
+    powershell -Command "Start-Process cmd '/c \"%~f0\"' -Verb RunAs -WorkingDirectory '%~dp0'"
+    exit /b
+)
+
 echo === CD Map Tracker ===
 echo.
 

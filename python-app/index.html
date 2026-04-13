@@ -189,8 +189,6 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
 .poi-found-btn.found { background: #a6e3a1; color: #1e1e2e; border-color: #a6e3a1; }
 .poi-found-check { font-size: 14px; }
 
-/* Calibration status */
-#cal-status { color: #f9e2af; font-size: 11px; margin-top: 4px; display: none; }
 </style>
 </head>
 <body>
@@ -218,9 +216,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
   <div class="sb-buttons">
     <div class="btn-row">
       <button class="btn" id="btn-follow">Follow Player</button>
-      <button class="btn" id="btn-calibrate">Calibrate</button>
     </div>
-    <div id="cal-status"></div>
     <div class="btn-row" style="margin-top:5px">
       <button class="btn" id="btn-show-all" style="font-size:11px">Show All</button>
       <button class="btn" id="btn-hide-all" style="font-size:11px">Hide All</button>
@@ -254,8 +250,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
 (function() {
   // ── Config ────────────────────────────────────────────────────
   var TILE_URLS = {
-    pywel: "https://tiles.mapgenie.io/games/crimson-desert/pywel/default-v2/{z}/{y}/{x}.jpg",
-    abyss: "https://tiles.mapgenie.io/games/crimson-desert/oats/faction-v3/{z}/{y}/{x}.jpg"
+    pywel: "/tiles/pywel/{z}/{y}/{x}.jpg",
+    abyss: "/tiles/abyss/{z}/{y}/{x}.jpg"
   };
 
   var GROUP_COLORS = {}; // groupTitle -> color
@@ -290,6 +286,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
   var tileLayer = L.tileLayer(TILE_URLS.pywel, {
     minZoom: 7,
     maxZoom: 19,
+    maxNativeZoom: 15,
     tileSize: 256,
     noWrap: true,
     errorTileUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/QualzQAAAABJRU5ErkJggg==",
@@ -317,7 +314,6 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
   var ws = null;
   var connected = false;
   var followMode = false;
-  var calibrating = false;
   var currentRealm = "pywel";
 
   // ── DOM refs ──────────────────────────────────────────────────
@@ -326,8 +322,6 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
   var elCoords = document.getElementById("coords");
   var elRealm = document.getElementById("realm");
   var elFollow = document.getElementById("btn-follow");
-  var elCalibrate = document.getElementById("btn-calibrate");
-  var elCalStatus = document.getElementById("cal-status");
   var elWpName = document.getElementById("wp-name");
   var elSaveWp = document.getElementById("btn-save-wp");
   var elFetchComm = document.getElementById("btn-fetch-community");
@@ -827,6 +821,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
         }
         playerMarker.setTooltipContent(msg.label || "");
         elCoords.textContent = msg.label || "--";
+        elStatus.textContent = "Tracking";
+        elDot.className = "status-dot connected";
 
         if (msg.realm && msg.realm !== currentRealm) {
           switchRealm(msg.realm);
@@ -840,16 +836,6 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
 
       case "waypoints":
         rebuildWaypoints(msg.local || [], msg.community || []);
-        break;
-
-      case "calibration_status":
-        elCalStatus.style.display = "";
-        elCalStatus.textContent = msg.text || "";
-        if (msg.done) {
-          calibrating = false;
-          elCalibrate.classList.remove("active");
-          setTimeout(function() { elCalStatus.style.display = "none"; }, 5000);
-        }
         break;
 
       case "hello":
@@ -888,7 +874,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
         permanent: true, direction: "top", offset: [0, -8],
         className: "wp-tooltip wp-local-tooltip",
       });
-      m.on("click", function() { map.flyTo(L.latLng(wp.lat, wp.lng), map.getZoom(), { duration: 0.6 }); });
+      m.on("click", function() { disableFollow(); map.flyTo(L.latLng(wp.lat, wp.lng), map.getZoom(), { duration: 0.6 }); });
       localWpGroup.addLayer(m);
     });
 
@@ -901,10 +887,24 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
         permanent: false, direction: "top", offset: [0, -8],
         className: "wp-tooltip wp-comm-tooltip",
       });
-      m.on("click", function() { map.flyTo(L.latLng(wp.lat, wp.lng), map.getZoom(), { duration: 0.6 }); });
+      m.on("click", function() { disableFollow(); map.flyTo(L.latLng(wp.lat, wp.lng), map.getZoom(), { duration: 0.6 }); });
       commWpGroup.addLayer(m);
     });
   }
+
+  // ── Follow Mode Helpers ───────────────────────────────────────
+  function disableFollow() {
+    if (!followMode) return;
+    followMode = false;
+    elFollow.classList.remove("active");
+    send({ type: "toggle_follow" });
+  }
+
+  // Disable follow when user starts dragging the map
+  map.on("dragstart", disableFollow);
+
+  // Disable follow when a POI popup opens
+  map.on("popupopen", disableFollow);
 
   // ── Button Handlers ───────────────────────────────────────────
   elFollow.addEventListener("click", function() {
@@ -913,24 +913,6 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; f
     send({ type: "toggle_follow" });
   });
 
-  elCalibrate.addEventListener("click", function() {
-    calibrating = !calibrating;
-    elCalibrate.classList.toggle("active", calibrating);
-    if (calibrating) {
-      send({ type: "calibrate_start" });
-      elCalStatus.style.display = "";
-      elCalStatus.textContent = "Stand at a known spot, then click that location on the map.";
-    } else {
-      send({ type: "calibrate_cancel" });
-      elCalStatus.style.display = "none";
-    }
-  });
-
-  map.on("click", function(e) {
-    if (calibrating) {
-      send({ type: "calibrate_click", lng: e.latlng.lng, lat: e.latlng.lat });
-    }
-  });
 
   elSaveWp.addEventListener("click", function() {
     var name = elWpName.value.trim() || "Waypoint";
