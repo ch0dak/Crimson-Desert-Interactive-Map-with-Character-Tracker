@@ -1,0 +1,955 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CD Map Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #181825; font-family: "Segoe UI", sans-serif; }
+#map { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #181825; }
+
+/* Leaflet dark theme */
+.leaflet-bar a { background: #313244 !important; color: #cdd6f4 !important; border-color: #45475a !important; }
+.leaflet-bar a:hover { background: #89b4fa !important; color: #1e1e2e !important; }
+.leaflet-control-attribution { display: none !important; }
+.leaflet-popup-content-wrapper { background: #1e1e2e; color: #cdd6f4; border: 1px solid #45475a; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); }
+.leaflet-popup-tip { background: #1e1e2e; border: 1px solid #45475a; }
+.leaflet-popup-close-button { color: #6c7086 !important; font-size: 18px !important; }
+.leaflet-popup-close-button:hover { color: #cdd6f4 !important; }
+
+/* Player tooltip */
+.leaflet-tooltip.player-tooltip {
+  background: transparent; border: none; box-shadow: none;
+  color: #fff; font: bold 11px "Segoe UI", sans-serif;
+  text-shadow: 0 0 3px #000, 0 0 6px #000;
+  padding: 0; white-space: nowrap;
+}
+.leaflet-tooltip.player-tooltip::before { display: none; }
+.leaflet-tooltip.wp-tooltip {
+  background: transparent; border: none; box-shadow: none;
+  font: 11px "Segoe UI", sans-serif;
+  text-shadow: 0 0 3px #000, 0 0 3px #000;
+  padding: 0; white-space: nowrap;
+}
+.leaflet-tooltip.wp-tooltip::before { display: none; }
+.wp-local-tooltip { color: #f9e2af; }
+.wp-comm-tooltip { color: #a8d4f0; }
+
+/* ── Sidebar ───────────────────────────────────────────── */
+#sidebar {
+  position: fixed; top: 0; left: 0; z-index: 1000;
+  width: 300px; height: 100vh;
+  background: rgba(30,30,46,0.97);
+  border-right: 1px solid #45475a;
+  display: flex; flex-direction: column;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  transition: transform 0.3s ease;
+  color: #cdd6f4; font-size: 13px;
+}
+#sidebar.collapsed { transform: translateX(-300px); }
+#sidebar-toggle {
+  position: fixed; top: 10px; left: 10px; z-index: 1001;
+  background: rgba(30,30,46,0.94); color: #cdd6f4;
+  border: 1px solid #45475a; border-radius: 6px;
+  padding: 6px 10px; cursor: pointer; font-size: 16px;
+  transition: left 0.3s ease;
+}
+#sidebar-toggle.open { left: 310px; }
+
+/* Sidebar header */
+.sb-header {
+  padding: 14px; border-bottom: 1px solid #45475a; flex-shrink: 0;
+}
+.sb-title { font-weight: bold; font-size: 16px; color: #89b4fa; margin-bottom: 8px; }
+.status-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; background: #f38ba8; flex-shrink: 0; }
+.status-dot.connected { background: #a6e3a1; }
+.info-row { display: flex; justify-content: space-between; margin-bottom: 3px; font-size: 12px; }
+.label { color: #6c7086; }
+.value { color: #cdd6f4; font-family: Consolas, monospace; font-size: 11px; }
+
+/* Buttons */
+.sb-buttons { padding: 10px 14px; border-bottom: 1px solid #45475a; flex-shrink: 0; }
+.btn {
+  display: block; width: 100%; background: #313244; color: #cdd6f4;
+  border: 1px solid #45475a; padding: 5px 12px; border-radius: 4px;
+  cursor: pointer; font-size: 12px; margin-bottom: 5px; text-align: center;
+  font-family: "Segoe UI", sans-serif;
+}
+.btn:hover { background: #45475a; }
+.btn.active { background: #89b4fa; color: #1e1e2e; }
+.btn-row { display: flex; gap: 5px; }
+.btn-row .btn { flex: 1; }
+
+/* Search */
+.sb-search { padding: 10px 14px; border-bottom: 1px solid #45475a; flex-shrink: 0; }
+#search-input {
+  width: 100%; background: #313244; color: #cdd6f4;
+  border: 1px solid #45475a; padding: 6px 10px; border-radius: 4px;
+  font-size: 12px; font-family: "Segoe UI", sans-serif;
+}
+#search-input::placeholder { color: #6c7086; }
+#search-input:focus { outline: none; border-color: #89b4fa; }
+#search-results {
+  max-height: 200px; overflow-y: auto; margin-top: 6px; display: none;
+}
+.search-item {
+  padding: 4px 8px; cursor: pointer; font-size: 12px;
+  border-radius: 3px; display: flex; align-items: center; gap: 6px;
+}
+.search-item:hover { background: #313244; }
+.search-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* Category list */
+.sb-categories {
+  flex: 1; overflow-y: auto; padding: 8px 0;
+}
+.sb-categories::-webkit-scrollbar { width: 6px; }
+.sb-categories::-webkit-scrollbar-track { background: transparent; }
+.sb-categories::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+
+.cat-group {
+  margin-bottom: 2px;
+}
+.cat-group-header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px; cursor: pointer; font-size: 12px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+  color: #a6adc8;
+}
+.cat-group-header:hover { background: rgba(69,71,90,0.3); }
+.cat-group-arrow {
+  font-size: 10px; transition: transform 0.2s;
+  width: 12px; text-align: center;
+}
+.cat-group-arrow.open { transform: rotate(90deg); }
+.cat-group-color {
+  width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0;
+}
+.cat-group-count { margin-left: auto; color: #6c7086; font-size: 11px; font-weight: normal; }
+
+.cat-group-items { display: none; }
+.cat-group-items.open { display: block; }
+
+.cat-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 14px 4px 34px; cursor: pointer; font-size: 12px;
+}
+.cat-item:hover { background: rgba(69,71,90,0.3); }
+.cat-item-check {
+  width: 14px; height: 14px; border: 1px solid #585b70;
+  border-radius: 3px; flex-shrink: 0; display: flex;
+  align-items: center; justify-content: center;
+  font-size: 10px; color: transparent;
+}
+.cat-item-check.checked { background: #89b4fa; border-color: #89b4fa; color: #1e1e2e; }
+.cat-item-name { flex: 1; }
+.cat-item-count { color: #6c7086; font-size: 11px; }
+.cat-item-found { color: #a6e3a1; font-size: 11px; }
+
+/* Progress bar */
+.sb-progress { padding: 10px 14px; border-top: 1px solid #45475a; flex-shrink: 0; }
+.progress-bar { height: 6px; background: #313244; border-radius: 3px; overflow: hidden; }
+.progress-fill { height: 100%; background: #a6e3a1; border-radius: 3px; transition: width 0.3s; }
+.progress-text { font-size: 11px; color: #6c7086; margin-top: 4px; text-align: center; }
+
+/* Waypoints section */
+.sb-waypoints { padding: 10px 14px; border-top: 1px solid #45475a; flex-shrink: 0; }
+.section-title { font-size: 11px; color: #6c7086; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.wp-row { display: flex; gap: 5px; margin-bottom: 5px; }
+.wp-input {
+  flex: 1; background: #313244; color: #cdd6f4;
+  border: 1px solid #45475a; padding: 4px 8px;
+  border-radius: 4px; font-size: 12px;
+  font-family: "Segoe UI", sans-serif;
+}
+.wp-input::placeholder { color: #6c7086; }
+.wp-input:focus { outline: none; border-color: #89b4fa; }
+.btn-small { padding: 4px 8px; font-size: 11px; width: auto; }
+
+/* Popup content */
+.poi-popup { min-width: 200px; max-width: 280px; }
+.poi-popup-title { font-size: 14px; font-weight: bold; color: #cdd6f4; margin-bottom: 4px; }
+.poi-popup-cat { font-size: 11px; color: #89b4fa; margin-bottom: 8px; }
+.poi-popup-desc { font-size: 12px; color: #a6adc8; margin-bottom: 10px; line-height: 1.4; max-height: 150px; overflow-y: auto; }
+.poi-popup-desc::-webkit-scrollbar { width: 4px; }
+.poi-popup-desc::-webkit-scrollbar-thumb { background: #45475a; border-radius: 2px; }
+.poi-found-btn {
+  display: flex; align-items: center; gap: 6px;
+  background: #313244; color: #cdd6f4;
+  border: 1px solid #45475a; padding: 6px 12px;
+  border-radius: 4px; cursor: pointer; font-size: 12px;
+  width: 100%; justify-content: center;
+  font-family: "Segoe UI", sans-serif;
+}
+.poi-found-btn:hover { background: #45475a; }
+.poi-found-btn.found { background: #a6e3a1; color: #1e1e2e; border-color: #a6e3a1; }
+.poi-found-check { font-size: 14px; }
+
+/* Calibration status */
+#cal-status { color: #f9e2af; font-size: 11px; margin-top: 4px; display: none; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<button id="sidebar-toggle" class="open">&#9776;</button>
+<div id="sidebar">
+  <div class="sb-header">
+    <div class="sb-title">CD Map Tracker</div>
+    <div class="status-row">
+      <span class="status-dot" id="status-dot"></span>
+      <span id="status-text">Connecting...</span>
+    </div>
+    <div class="info-row">
+      <span class="label">Position:</span>
+      <span id="coords" class="value">--</span>
+    </div>
+    <div class="info-row">
+      <span class="label">Realm:</span>
+      <span id="realm" class="value">--</span>
+    </div>
+  </div>
+
+  <div class="sb-buttons">
+    <div class="btn-row">
+      <button class="btn" id="btn-follow">Follow Player</button>
+      <button class="btn" id="btn-calibrate">Calibrate</button>
+    </div>
+    <div id="cal-status"></div>
+    <div class="btn-row" style="margin-top:5px">
+      <button class="btn" id="btn-show-all" style="font-size:11px">Show All</button>
+      <button class="btn" id="btn-hide-all" style="font-size:11px">Hide All</button>
+      <button class="btn" id="btn-hide-found" style="font-size:11px">Hide Found</button>
+    </div>
+  </div>
+
+  <div class="sb-search">
+    <input type="text" id="search-input" placeholder="Search locations...">
+    <div id="search-results"></div>
+  </div>
+
+  <div class="sb-categories" id="category-list"></div>
+
+  <div class="sb-progress">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-text" id="progress-text">0 / 0 found</div>
+  </div>
+
+  <div class="sb-waypoints">
+    <div class="section-title">Waypoints</div>
+    <div class="wp-row">
+      <input type="text" id="wp-name" class="wp-input" placeholder="Waypoint name">
+      <button class="btn btn-small" id="btn-save-wp">Save</button>
+    </div>
+    <button class="btn" id="btn-fetch-community" style="font-size:11px;">Refresh Community WPs</button>
+  </div>
+</div>
+
+<script>
+(function() {
+  // ── Config ────────────────────────────────────────────────────
+  var TILE_URLS = {
+    pywel: "https://tiles.mapgenie.io/games/crimson-desert/pywel/default-v2/{z}/{y}/{x}.jpg",
+    abyss: "https://tiles.mapgenie.io/games/crimson-desert/oats/faction-v3/{z}/{y}/{x}.jpg"
+  };
+
+  var GROUP_COLORS = {}; // groupTitle -> color
+  var CAT_INFO = {};     // catId -> {title, icon, color, groupTitle}
+  var ALL_LOCATIONS = []; // array of location objects from JSON
+  var CAT_LAYERS = {};   // catId -> L.layerGroup
+  var CAT_VISIBLE = {};  // catId -> bool
+  var FOUND = {};        // locationId -> true
+  var HIDE_FOUND = false;
+  var MARKERS = {};      // locationId -> L.marker
+  var MIN_POI_ZOOM = 11; // markers only show at this zoom and above
+
+  // Canvas renderer for performance with thousands of markers
+  var canvasRenderer = L.canvas({ padding: 0.5 });
+
+  // ── Map Setup ─────────────────────────────────────────────────
+  var map = L.map("map", {
+    minZoom: 7,
+    maxZoom: 19,
+    zoomSnap: 1,
+    zoomDelta: 1,
+    attributionControl: false,
+    zoomControl: true,
+    renderer: canvasRenderer,
+  });
+
+  var bounds = L.latLngBounds(L.latLng(0, -1.4), L.latLng(1.4, 0));
+  map.setMaxBounds(bounds.pad(0.15));
+  // Start at the MapGenie default view (zoomed in enough to see POIs)
+  map.setView([0.698, -0.775], 11);
+
+  var tileLayer = L.tileLayer(TILE_URLS.pywel, {
+    minZoom: 7,
+    maxZoom: 19,
+    tileSize: 256,
+    noWrap: true,
+    errorTileUrl: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQABNjN9GQAAAAlwSFlzAAAWJQAAFiUBSVIk8AAAAA0lEQVQI12P4z8BQDwAEgAF/QualzQAAAABJRU5ErkJggg==",
+  });
+  tileLayer.addTo(map);
+
+  // ── Player Marker ─────────────────────────────────────────────
+  var playerMarker = L.circleMarker([0.7, -0.7], {
+    radius: 10, fillColor: "#d4920a", color: "#ffffff",
+    weight: 2, fillOpacity: 0, opacity: 0,
+    zIndexOffset: 10000,
+  });
+  playerMarker.addTo(map);
+  playerMarker.bindTooltip("", {
+    permanent: true, direction: "right", offset: [12, 0],
+    className: "player-tooltip",
+  });
+  var playerVisible = false;
+
+  // ── Waypoint Layers ───────────────────────────────────────────
+  var localWpGroup = L.layerGroup().addTo(map);
+  var commWpGroup = L.layerGroup().addTo(map);
+
+  // ── State ─────────────────────────────────────────────────────
+  var ws = null;
+  var connected = false;
+  var followMode = false;
+  var calibrating = false;
+  var currentRealm = "pywel";
+
+  // ── DOM refs ──────────────────────────────────────────────────
+  var elDot = document.getElementById("status-dot");
+  var elStatus = document.getElementById("status-text");
+  var elCoords = document.getElementById("coords");
+  var elRealm = document.getElementById("realm");
+  var elFollow = document.getElementById("btn-follow");
+  var elCalibrate = document.getElementById("btn-calibrate");
+  var elCalStatus = document.getElementById("cal-status");
+  var elWpName = document.getElementById("wp-name");
+  var elSaveWp = document.getElementById("btn-save-wp");
+  var elFetchComm = document.getElementById("btn-fetch-community");
+  var elSearchInput = document.getElementById("search-input");
+  var elSearchResults = document.getElementById("search-results");
+  var elCategoryList = document.getElementById("category-list");
+  var elProgressFill = document.getElementById("progress-fill");
+  var elProgressText = document.getElementById("progress-text");
+  var elSidebarToggle = document.getElementById("sidebar-toggle");
+  var elSidebar = document.getElementById("sidebar");
+
+  // ── localStorage ──────────────────────────────────────────────
+  function loadFound() {
+    try {
+      var data = localStorage.getItem("cd_tracker_found");
+      if (data) FOUND = JSON.parse(data);
+    } catch(e) {}
+  }
+  function saveFound() {
+    try {
+      localStorage.setItem("cd_tracker_found", JSON.stringify(FOUND));
+    } catch(e) {}
+  }
+  function loadCatVisibility() {
+    try {
+      var data = localStorage.getItem("cd_tracker_cat_vis");
+      if (data) CAT_VISIBLE = JSON.parse(data);
+    } catch(e) {}
+  }
+  function saveCatVisibility() {
+    try {
+      localStorage.setItem("cd_tracker_cat_vis", JSON.stringify(CAT_VISIBLE));
+    } catch(e) {}
+  }
+
+  // ── Load MapGenie Data ────────────────────────────────────────
+  function loadMapData() {
+    fetch("/mapgenie_data.json")
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
+        loadFound();
+        loadCatVisibility();
+        processMapData(data);
+        buildCategorySidebar(data.groups);
+        updateProgress();
+      })
+      .catch(function(e) {
+        console.error("Failed to load mapgenie_data.json:", e);
+      });
+  }
+
+  function processMapData(data) {
+    ALL_LOCATIONS = data.locations;
+
+    // Build category info lookup
+    data.groups.forEach(function(g) {
+      GROUP_COLORS[g.title] = g.color;
+      g.categories.forEach(function(c) {
+        CAT_INFO[c.id] = {
+          title: c.title,
+          icon: c.icon,
+          color: g.color,
+          groupTitle: g.title,
+          premium: c.premium,
+        };
+        // Default visibility
+        if (CAT_VISIBLE[c.id] === undefined) {
+          CAT_VISIBLE[c.id] = true;
+        }
+        CAT_LAYERS[c.id] = L.layerGroup();
+      });
+    });
+
+    // Create markers for all locations
+    data.locations.forEach(function(loc) {
+      var catInfo = CAT_INFO[loc.c];
+      if (!catInfo) return;
+
+      var isFound = !!FOUND[loc.id];
+      var marker = L.circleMarker([loc.la, loc.lo], {
+        radius: getMarkerRadius(map.getZoom()),
+        fillColor: "#" + catInfo.color,
+        color: isFound ? "#a6e3a1" : darkenColor(catInfo.color, 0.6),
+        weight: isFound ? 2 : 1,
+        fillOpacity: isFound ? 0.3 : 0.85,
+        opacity: 1,
+        renderer: canvasRenderer,
+      });
+
+      marker.bindPopup(function() { return buildPopup(loc, catInfo); }, {
+        maxWidth: 300, className: "dark-popup"
+      });
+
+      marker._locId = loc.id;
+      marker._catId = loc.c;
+      MARKERS[loc.id] = marker;
+
+      if (CAT_LAYERS[loc.c]) {
+        CAT_LAYERS[loc.c].addLayer(marker);
+      }
+    });
+
+    // Only add layers if zoomed in enough
+    updateLayerVisibility();
+
+    // Update markers on zoom
+    map.on("zoomend", function() {
+      updateLayerVisibility();
+      var r = getMarkerRadius(map.getZoom());
+      Object.keys(MARKERS).forEach(function(id) {
+        MARKERS[id].setRadius(r);
+      });
+    });
+  }
+
+  function darkenColor(hex, factor) {
+    var r = parseInt(hex.substring(0,2), 16);
+    var g = parseInt(hex.substring(2,4), 16);
+    var b = parseInt(hex.substring(4,6), 16);
+    r = Math.round(r * factor);
+    g = Math.round(g * factor);
+    b = Math.round(b * factor);
+    return "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1);
+  }
+
+  function getMarkerRadius(zoom) {
+    if (zoom <= 11) return 3;
+    if (zoom <= 13) return 5;
+    if (zoom <= 15) return 7;
+    return 9;
+  }
+
+  var _poisVisible = false;
+  function updateLayerVisibility() {
+    var zoom = map.getZoom();
+    var shouldShow = zoom >= MIN_POI_ZOOM;
+
+    if (shouldShow && !_poisVisible) {
+      _poisVisible = true;
+      Object.keys(CAT_LAYERS).forEach(function(catId) {
+        if (CAT_VISIBLE[catId]) {
+          CAT_LAYERS[catId].addTo(map);
+        }
+      });
+      if (HIDE_FOUND) applyHideFound();
+    } else if (!shouldShow && _poisVisible) {
+      _poisVisible = false;
+      Object.keys(CAT_LAYERS).forEach(function(catId) {
+        map.removeLayer(CAT_LAYERS[catId]);
+      });
+    }
+  }
+
+  function buildPopup(loc, catInfo) {
+    var isFound = !!FOUND[loc.id];
+    var desc = loc.d || "";
+    // Clean up HTML in description
+    desc = desc.replace(/<br\s*\/?>/gi, "\n").replace(/<[^>]+>/g, "");
+    desc = desc.trim();
+
+    var html = '<div class="poi-popup">';
+    html += '<div class="poi-popup-title">' + escapeHtml(loc.t) + '</div>';
+    html += '<div class="poi-popup-cat">' + escapeHtml(catInfo.title) + ' &middot; ' + escapeHtml(catInfo.groupTitle) + '</div>';
+    if (desc) {
+      html += '<div class="poi-popup-desc">' + escapeHtml(desc).replace(/\n/g, "<br>") + '</div>';
+    }
+    html += '<button class="poi-found-btn' + (isFound ? ' found' : '') + '" onclick="window._toggleFound(' + loc.id + ', this)">';
+    html += '<span class="poi-found-check">' + (isFound ? '&#10003;' : '&#9744;') + '</span>';
+    html += '<span>' + (isFound ? 'Found!' : 'Mark as Found') + '</span>';
+    html += '</button>';
+    html += '</div>';
+    return html;
+  }
+
+  function escapeHtml(str) {
+    var div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  // Global toggle found handler (called from popup onclick)
+  window._toggleFound = function(locId, btn) {
+    if (FOUND[locId]) {
+      delete FOUND[locId];
+    } else {
+      FOUND[locId] = true;
+    }
+    saveFound();
+    updateProgress();
+
+    // Update marker style
+    var marker = MARKERS[locId];
+    if (marker) {
+      var isFound = !!FOUND[locId];
+      var catInfo = CAT_INFO[marker._catId];
+      marker.setStyle({
+        fillOpacity: isFound ? 0.3 : 0.85,
+        color: isFound ? "#a6e3a1" : darkenColor(catInfo.color, 0.6),
+        weight: isFound ? 2 : 1,
+      });
+
+      // If hide-found mode, remove from map
+      if (HIDE_FOUND && isFound) {
+        var layer = CAT_LAYERS[marker._catId];
+        if (layer) layer.removeLayer(marker);
+        map.closePopup();
+      }
+    }
+
+    // Update button
+    if (btn) {
+      var isFound = !!FOUND[locId];
+      btn.className = "poi-found-btn" + (isFound ? " found" : "");
+      btn.innerHTML = '<span class="poi-found-check">' + (isFound ? '&#10003;' : '&#9744;') + '</span>' +
+                      '<span>' + (isFound ? 'Found!' : 'Mark as Found') + '</span>';
+    }
+
+    // Update sidebar counts
+    updateCategoryCounts();
+  };
+
+  // ── Category Sidebar ──────────────────────────────────────────
+  function buildCategorySidebar(groups) {
+    var html = "";
+    groups.forEach(function(g, gi) {
+      var totalLocs = 0;
+      var catIds = [];
+      g.categories.forEach(function(c) {
+        catIds.push(c.id);
+        totalLocs += countCatLocations(c.id);
+      });
+
+      html += '<div class="cat-group">';
+      html += '<div class="cat-group-header" data-group="' + gi + '">';
+      html += '<span class="cat-group-arrow" id="arrow-' + gi + '">&#9654;</span>';
+      html += '<span class="cat-group-color" style="background:#' + g.color + '"></span>';
+      html += '<span>' + escapeHtml(g.title) + '</span>';
+      html += '<span class="cat-group-count" id="gcount-' + gi + '">' + totalLocs + '</span>';
+      html += '</div>';
+      html += '<div class="cat-group-items" id="gitems-' + gi + '">';
+
+      g.categories.forEach(function(c) {
+        var count = countCatLocations(c.id);
+        var foundCount = countCatFound(c.id);
+        var vis = CAT_VISIBLE[c.id] !== false;
+        html += '<div class="cat-item" data-cat="' + c.id + '">';
+        html += '<span class="cat-item-check' + (vis ? ' checked' : '') + '" id="ccheck-' + c.id + '">&#10003;</span>';
+        html += '<span class="cat-item-name">' + escapeHtml(c.title) + '</span>';
+        html += '<span class="cat-item-found" id="cfound-' + c.id + '">' + foundCount + '</span>';
+        html += '<span class="cat-item-count">/ ' + count + '</span>';
+        html += '</div>';
+      });
+
+      html += '</div></div>';
+    });
+
+    elCategoryList.innerHTML = html;
+
+    // Bind group toggles
+    var headers = elCategoryList.querySelectorAll(".cat-group-header");
+    headers.forEach(function(h) {
+      h.addEventListener("click", function() {
+        var gi = h.getAttribute("data-group");
+        var items = document.getElementById("gitems-" + gi);
+        var arrow = document.getElementById("arrow-" + gi);
+        items.classList.toggle("open");
+        arrow.classList.toggle("open");
+      });
+    });
+
+    // Bind category toggles
+    var catItems = elCategoryList.querySelectorAll(".cat-item");
+    catItems.forEach(function(item) {
+      item.addEventListener("click", function() {
+        var catId = parseInt(item.getAttribute("data-cat"));
+        toggleCategory(catId);
+      });
+    });
+  }
+
+  function toggleCategory(catId) {
+    CAT_VISIBLE[catId] = !CAT_VISIBLE[catId];
+    saveCatVisibility();
+
+    var check = document.getElementById("ccheck-" + catId);
+    if (check) check.classList.toggle("checked", CAT_VISIBLE[catId]);
+
+    if (!_poisVisible) return; // Don't add/remove if zoomed out
+    var layer = CAT_LAYERS[catId];
+    if (!layer) return;
+
+    if (CAT_VISIBLE[catId]) {
+      layer.addTo(map);
+      if (HIDE_FOUND) applyHideFoundForCat(catId);
+    } else {
+      map.removeLayer(layer);
+    }
+  }
+
+  function countCatLocations(catId) {
+    var count = 0;
+    ALL_LOCATIONS.forEach(function(loc) {
+      if (loc.c === catId) count++;
+    });
+    return count;
+  }
+
+  function countCatFound(catId) {
+    var count = 0;
+    ALL_LOCATIONS.forEach(function(loc) {
+      if (loc.c === catId && FOUND[loc.id]) count++;
+    });
+    return count;
+  }
+
+  function updateCategoryCounts() {
+    Object.keys(CAT_INFO).forEach(function(catId) {
+      var el = document.getElementById("cfound-" + catId);
+      if (el) el.textContent = countCatFound(parseInt(catId));
+    });
+  }
+
+  function updateProgress() {
+    var total = ALL_LOCATIONS.length;
+    var found = Object.keys(FOUND).length;
+    var pct = total ? (found / total * 100).toFixed(1) : 0;
+    elProgressFill.style.width = pct + "%";
+    elProgressText.textContent = found + " / " + total + " found (" + pct + "%)";
+  }
+
+  // ── Show/Hide All ─────────────────────────────────────────────
+  document.getElementById("btn-show-all").addEventListener("click", function() {
+    Object.keys(CAT_LAYERS).forEach(function(catId) {
+      CAT_VISIBLE[catId] = true;
+      if (_poisVisible) CAT_LAYERS[catId].addTo(map);
+      var check = document.getElementById("ccheck-" + catId);
+      if (check) check.classList.add("checked");
+    });
+    saveCatVisibility();
+    if (HIDE_FOUND && _poisVisible) applyHideFound();
+  });
+
+  document.getElementById("btn-hide-all").addEventListener("click", function() {
+    Object.keys(CAT_LAYERS).forEach(function(catId) {
+      CAT_VISIBLE[catId] = false;
+      if (_poisVisible) map.removeLayer(CAT_LAYERS[catId]);
+      var check = document.getElementById("ccheck-" + catId);
+      if (check) check.classList.remove("checked");
+    });
+    saveCatVisibility();
+  });
+
+  document.getElementById("btn-hide-found").addEventListener("click", function() {
+    HIDE_FOUND = !HIDE_FOUND;
+    this.classList.toggle("active", HIDE_FOUND);
+    if (HIDE_FOUND) {
+      applyHideFound();
+    } else {
+      restoreFound();
+    }
+  });
+
+  function applyHideFound() {
+    Object.keys(CAT_LAYERS).forEach(function(catId) {
+      if (CAT_VISIBLE[catId]) {
+        applyHideFoundForCat(parseInt(catId));
+      }
+    });
+  }
+
+  function applyHideFoundForCat(catId) {
+    var layer = CAT_LAYERS[catId];
+    if (!layer) return;
+    layer.eachLayer(function(m) {
+      if (FOUND[m._locId]) {
+        layer.removeLayer(m);
+      }
+    });
+  }
+
+  function restoreFound() {
+    // Re-add found markers that were removed
+    ALL_LOCATIONS.forEach(function(loc) {
+      if (FOUND[loc.id] && CAT_VISIBLE[loc.c]) {
+        var marker = MARKERS[loc.id];
+        var layer = CAT_LAYERS[loc.c];
+        if (marker && layer && !layer.hasLayer(marker)) {
+          layer.addLayer(marker);
+        }
+      }
+    });
+  }
+
+  // ── Search ────────────────────────────────────────────────────
+  var searchTimeout = null;
+  elSearchInput.addEventListener("input", function() {
+    clearTimeout(searchTimeout);
+    var q = this.value.trim().toLowerCase();
+    if (q.length < 2) {
+      elSearchResults.style.display = "none";
+      return;
+    }
+    searchTimeout = setTimeout(function() {
+      var results = [];
+      for (var i = 0; i < ALL_LOCATIONS.length && results.length < 20; i++) {
+        var loc = ALL_LOCATIONS[i];
+        if (loc.t.toLowerCase().indexOf(q) !== -1) {
+          results.push(loc);
+        }
+      }
+      showSearchResults(results);
+    }, 200);
+  });
+
+  function showSearchResults(results) {
+    if (results.length === 0) {
+      elSearchResults.style.display = "none";
+      return;
+    }
+    var html = "";
+    results.forEach(function(loc) {
+      var catInfo = CAT_INFO[loc.c] || {};
+      html += '<div class="search-item" data-lat="' + loc.la + '" data-lng="' + loc.lo + '" data-id="' + loc.id + '">';
+      html += '<span class="search-dot" style="background:#' + (catInfo.color || '888') + '"></span>';
+      html += '<span>' + escapeHtml(loc.t) + '</span>';
+      html += '</div>';
+    });
+    elSearchResults.innerHTML = html;
+    elSearchResults.style.display = "block";
+
+    elSearchResults.querySelectorAll(".search-item").forEach(function(item) {
+      item.addEventListener("click", function() {
+        var lat = parseFloat(this.getAttribute("data-lat"));
+        var lng = parseFloat(this.getAttribute("data-lng"));
+        var id = parseInt(this.getAttribute("data-id"));
+        map.flyTo([lat, lng], 15, { duration: 0.6 });
+        elSearchResults.style.display = "none";
+        elSearchInput.value = "";
+
+        // Open popup
+        var marker = MARKERS[id];
+        if (marker) {
+          setTimeout(function() { marker.openPopup(); }, 700);
+        }
+      });
+    });
+  }
+
+  // ── Sidebar Toggle ────────────────────────────────────────────
+  elSidebarToggle.addEventListener("click", function() {
+    elSidebar.classList.toggle("collapsed");
+    this.classList.toggle("open");
+    setTimeout(function() { map.invalidateSize(); }, 350);
+  });
+
+  // ── WebSocket ─────────────────────────────────────────────────
+  function connectWS() {
+    var wsUrl = "ws://" + location.host;
+    ws = new WebSocket(wsUrl);
+
+    ws.onopen = function() {
+      connected = true;
+      elDot.className = "status-dot connected";
+      elStatus.textContent = "Connected";
+    };
+
+    ws.onclose = function() {
+      connected = false;
+      elDot.className = "status-dot";
+      elStatus.textContent = "Disconnected — reconnecting...";
+      setTimeout(connectWS, 3000);
+    };
+
+    ws.onerror = function() {};
+
+    ws.onmessage = function(event) {
+      try { handleMessage(JSON.parse(event.data)); }
+      catch(e) { console.warn("Bad WS message:", e); }
+    };
+  }
+
+  function send(obj) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(obj));
+    }
+  }
+
+  // ── Message Handling ──────────────────────────────────────────
+  function handleMessage(msg) {
+    switch (msg.type) {
+      case "position":
+        var latlng = L.latLng(msg.lat, msg.lng);
+        playerMarker.setLatLng(latlng);
+        if (!playerVisible) {
+          playerMarker.setStyle({ opacity: 1, fillOpacity: 1 });
+          playerVisible = true;
+        }
+        playerMarker.setTooltipContent(msg.label || "");
+        elCoords.textContent = msg.label || "--";
+
+        if (msg.realm && msg.realm !== currentRealm) {
+          switchRealm(msg.realm);
+        }
+        elRealm.textContent = msg.realm || currentRealm;
+
+        if (followMode) {
+          map.panTo(latlng, { animate: true, duration: 0.4 });
+        }
+        break;
+
+      case "waypoints":
+        rebuildWaypoints(msg.local || [], msg.community || []);
+        break;
+
+      case "calibration_status":
+        elCalStatus.style.display = "";
+        elCalStatus.textContent = msg.text || "";
+        if (msg.done) {
+          calibrating = false;
+          elCalibrate.classList.remove("active");
+          setTimeout(function() { elCalStatus.style.display = "none"; }, 5000);
+        }
+        break;
+
+      case "hello":
+        console.log("[CD Map Tracker] Server v" + msg.version);
+        break;
+
+      case "status":
+        elStatus.textContent = msg.text || "";
+        break;
+
+      case "realm_changed":
+        if (msg.realm) switchRealm(msg.realm);
+        break;
+    }
+  }
+
+  // ── Realm Switching ───────────────────────────────────────────
+  function switchRealm(realm) {
+    currentRealm = realm;
+    var url = TILE_URLS[realm];
+    if (url) tileLayer.setUrl(url);
+    elRealm.textContent = realm;
+  }
+
+  // ── Waypoints ─────────────────────────────────────────────────
+  function rebuildWaypoints(local, community) {
+    localWpGroup.clearLayers();
+    commWpGroup.clearLayers();
+
+    local.forEach(function(wp) {
+      var m = L.circleMarker(L.latLng(wp.lat, wp.lng), {
+        radius: 6, fillColor: "#f9e2af", color: "#b0a088",
+        weight: 1, fillOpacity: 0.9,
+      });
+      m.bindTooltip(wp.name || "", {
+        permanent: true, direction: "top", offset: [0, -8],
+        className: "wp-tooltip wp-local-tooltip",
+      });
+      m.on("click", function() { map.flyTo(L.latLng(wp.lat, wp.lng), map.getZoom(), { duration: 0.6 }); });
+      localWpGroup.addLayer(m);
+    });
+
+    community.forEach(function(wp) {
+      var m = L.circleMarker(L.latLng(wp.lat, wp.lng), {
+        radius: 5, fillColor: "#a8d4f0", color: "#7ab8d9",
+        weight: 1, fillOpacity: 0.9,
+      });
+      m.bindTooltip(wp.name || "", {
+        permanent: false, direction: "top", offset: [0, -8],
+        className: "wp-tooltip wp-comm-tooltip",
+      });
+      m.on("click", function() { map.flyTo(L.latLng(wp.lat, wp.lng), map.getZoom(), { duration: 0.6 }); });
+      commWpGroup.addLayer(m);
+    });
+  }
+
+  // ── Button Handlers ───────────────────────────────────────────
+  elFollow.addEventListener("click", function() {
+    followMode = !followMode;
+    elFollow.classList.toggle("active", followMode);
+    send({ type: "toggle_follow" });
+  });
+
+  elCalibrate.addEventListener("click", function() {
+    calibrating = !calibrating;
+    elCalibrate.classList.toggle("active", calibrating);
+    if (calibrating) {
+      send({ type: "calibrate_start" });
+      elCalStatus.style.display = "";
+      elCalStatus.textContent = "Stand at a known spot, then click that location on the map.";
+    } else {
+      send({ type: "calibrate_cancel" });
+      elCalStatus.style.display = "none";
+    }
+  });
+
+  map.on("click", function(e) {
+    if (calibrating) {
+      send({ type: "calibrate_click", lng: e.latlng.lng, lat: e.latlng.lat });
+    }
+  });
+
+  elSaveWp.addEventListener("click", function() {
+    var name = elWpName.value.trim() || "Waypoint";
+    send({ type: "save_waypoint", name: name });
+    elWpName.value = "";
+  });
+
+  elWpName.addEventListener("keydown", function(e) {
+    if (e.key === "Enter") elSaveWp.click();
+  });
+
+  elFetchComm.addEventListener("click", function() {
+    send({ type: "fetch_community" });
+  });
+
+  // ── Start ─────────────────────────────────────────────────────
+  loadMapData();
+  connectWS();
+})();
+</script>
+</body>
+</html>
